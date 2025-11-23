@@ -101,8 +101,11 @@ class SweepSettingsWidget(SettingsWidget):
         self.sweep_type = self.addSelectionField(
             "Sweep type:", ["Continuous", "Pulsed"]
         )
-        self.smu_gate = self.addSelectionField("Gate SMU:", self.smu_list, 0)
-        self.smu_drain = self.addSelectionField("Drain SMU:", self.smu_list, 1)
+        self.smu_gate = self.addSelectionField("Gate/Base SMU:", self.smu_list, 0)
+        self.smu_drain = self.addSelectionField("Drain/Collector SMU:", self.smu_list, 1)
+
+        self.dual_sweep = self.addCheckBox("Dual Sweep", checked=True)
+        self.end_beep = self.addCheckBox("End Beep", checked=True)
 
         self.load_defaults()
 
@@ -129,12 +132,16 @@ class SweepSettingsWidget(SettingsWidget):
         self.sweep_type.setCurrentIndex(int(CONF.get("Sweep", "pulsed")))
         self.smu_gate.setCurrentText(CONF.get("Sweep", "gate"))
         self.smu_drain.setCurrentText(CONF.get("Sweep", "drain"))
+        self.dual_sweep.setChecked(CONF.get("Sweep", "Dsweep"))
+        self.end_beep.setChecked(CONF.get("Sweep", "beep"))
 
     def save_defaults(self):
         CONF.set("Sweep", "tInt", self.t_int.value())
         CONF.set("Sweep", "delay", self.t_settling.value())
         CONF.set("Sweep", "gate", self.smu_gate.currentText())
         CONF.set("Sweep", "drain", self.smu_drain.currentText())
+        CONF.set("Sweep", "Dsweep", self.dual_sweep.isChecked())
+        CONF.set("Sweep", "beep", self.end_beep.isChecked())
 
     @QtCore.pyqtSlot(int)
     def on_smu_gate_changed(self, int_smu):
@@ -239,6 +246,31 @@ class IVSweepSettingsWidget(SettingsWidget):
         CONF.set("Sweep", "smu_sweep", self.smu_sweep.currentText())
 
 
+class BipolarSweepSettingsWidget(SettingsWidget):
+    def __init__(self):
+        super().__init__()
+
+        self.vc_start = self.addDoubleField("Vc start:", 0, "V")
+        self.vc_stop = self.addDoubleField("Vc stop:", 0, "V")
+        self.vc_step = self.addDoubleField("Vc step:", 0, "V")
+        self.ib_list = self.addListField("Base Currents:", [0, 0.00002, 0.00004, 0.00006, 0.00008, 0.0001, 0.00012])
+
+        self.load_defaults()
+
+    def load_defaults(self):
+
+        self.vc_start.setValue(CONF.get("Sweep", "VcStart"))
+        self.vc_stop.setValue(CONF.get("Sweep", "VcStop"))
+        self.vc_step.setValue(CONF.get("Sweep", "VcStep"))
+        self.ib_list.setValue(CONF.get("Sweep", "IbList"))
+
+    def save_defaults(self):
+        CONF.set("Sweep", "VcStart", self.vc_start.value())
+        CONF.set("Sweep", "VcStop", self.vc_stop.value())
+        CONF.set("Sweep", "VcStep", self.vc_step.value())
+        CONF.set("Sweep", "IbList", self.ib_list.value())
+
+
 # noinspection PyArgumentList
 class KeithleyGuiApp(QtWidgets.QMainWindow):
     """ Provides a GUI for transfer and output sweeps on the Keithley 2600."""
@@ -264,11 +296,13 @@ class KeithleyGuiApp(QtWidgets.QMainWindow):
         self.transfer_sweep_settings = TransferSweepSettingsWidget()
         self.output_sweep_settings = OutputSweepSettingsWidget()
         self.iv_sweep_settings = IVSweepSettingsWidget(self.keithley)
+        self.bipolar_sweep_settings = BipolarSweepSettingsWidget()
         self.general_sweep_settings = SweepSettingsWidget(self.keithley)
 
         self.tabWidgetSweeps.widget(0).layout().addWidget(self.transfer_sweep_settings)
         self.tabWidgetSweeps.widget(1).layout().addWidget(self.output_sweep_settings)
         self.tabWidgetSweeps.widget(2).layout().addWidget(self.iv_sweep_settings)
+        self.tabWidgetSweeps.widget(3).layout().addWidget(self.bipolar_sweep_settings)
         self.groupBoxSweepSettings.layout().addWidget(self.general_sweep_settings)
 
         # create tabs for smu settings
@@ -438,6 +472,15 @@ class KeithleyGuiApp(QtWidgets.QMainWindow):
             smusweep = self.iv_sweep_settings.smu_sweep.currentText()
             params["smu_sweep"] = getattr(self.keithley, smusweep)
 
+        elif self.tabWidgetSweeps.currentIndex() == 3:
+            self.statusBar.showMessage("    Recording bipolar curve.")
+            # get sweep settings
+            params["sweep_type"] = "bipolar"
+            params["VcStart"] = self.bipolar_sweep_settings.vc_start.value()
+            params["VcStop"] = self.bipolar_sweep_settings.vc_stop.value()
+            params["VcStep"] = self.bipolar_sweep_settings.vc_step.value()
+            params["IbList"] = self.bipolar_sweep_settings.ib_list.value()
+
         else:
             return
 
@@ -449,6 +492,9 @@ class KeithleyGuiApp(QtWidgets.QMainWindow):
         params["smu_gate"] = getattr(self.keithley, smu_gate)
         params["smu_drain"] = getattr(self.keithley, smu_drain)
         params["pulsed"] = bool(self.general_sweep_settings.sweep_type.currentIndex())
+
+        params["dualSweep"] = self.general_sweep_settings.dual_sweep.isChecked()
+        params["EndBeep"] = self.general_sweep_settings.end_beep.isChecked()
 
         # check if integration time is valid, return otherwise
         freq = self.keithley.localnode.linefreq
@@ -677,6 +723,7 @@ class MeasureThread(QtCore.QThread):
                     self.params["tInt"],
                     self.params["delay"],
                     self.params["pulsed"],
+                    self.params["dualSweep"],
                 )
             elif self.params["sweep_type"] == "output":
                 sweep_data = self.keithley.output_measurement(
@@ -689,17 +736,20 @@ class MeasureThread(QtCore.QThread):
                     self.params["tInt"],
                     self.params["delay"],
                     self.params["pulsed"],
+                    self.params["dualSweep"],
                 )
 
             elif self.params["sweep_type"] == "iv":
                 direction = np.sign(self.params["VStop"] - self.params["VStart"])
                 stp = direction * abs(self.params["VStep"])
 
-                # forward and reverse sweeps
                 sweeplist = np.arange(
                     self.params["VStart"], self.params["VStop"] + stp, stp
                 )
-                sweeplist = np.append(sweeplist, np.flip(sweeplist))
+
+                # forward and reverse sweeps
+                if self.params["dualSweep"]:
+                    sweeplist = np.append(sweeplist, np.flip(sweeplist))
 
                 v, i = self.keithley.voltage_sweep_single_smu(
                     self.params["smu_sweep"],
@@ -723,7 +773,22 @@ class MeasureThread(QtCore.QThread):
                     params=params,
                 )
 
-            self.keithley.beeper.beep(0.3, 2400)
+            elif self.params["sweep_type"] == "bipolar":
+                sweep_data = self.keithley.bipolar_measurement(
+                    self.params["smu_gate"],
+                    self.params["smu_drain"],
+                    self.params["VcStart"],
+                    self.params["VcStop"],
+                    self.params["VcStep"],
+                    self.params["IbList"],
+                    self.params["tInt"],
+                    self.params["delay"],
+                    self.params["pulsed"],
+                    self.params["dualSweep"],
+                )
+
+            if self.params["EndBeep"]:
+                self.keithley.beeper.beep(0.3, 2400)
             self.keithley.reset()
 
             self.finished_sig.emit(sweep_data)

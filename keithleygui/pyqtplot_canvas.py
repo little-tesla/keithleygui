@@ -144,6 +144,18 @@ class SweepDataPlot(pg.GraphicsView):
             self.legend.setOffset((-20, 20))  # legend in top-right corner
             ydata = [np.abs(y) for y in ydata]
 
+        elif sweep_data.params["sweep_type"] == "iv":
+            self.setTitle("IV curve")
+            self.p.setLogMode(x=False, y=False)
+            self.legend.setOffset((-20, 20))  # legend in top-right corner
+            #ydata = [np.abs(y) for y in ydata]
+
+        elif sweep_data.params["sweep_type"] == "bipolar":
+            self.setTitle("Bipolar curve")
+            self.p.setLogMode(x=False, y=False)
+            self.legend.setOffset((-20, 20))  # legend in top-right corner
+            ydata = [np.abs(y) for y in ydata]
+
         else:
             self.setTitle("Sweep curve")
             self.p.setLogMode(x=False, y=False)

@@ -17,6 +17,7 @@ measurement.
 [keithley2600](https://github.com/OE-FET/keithley2600).
 
 ![Screenshot of the user interface](screenshots/KeithleyGUI.png)
+![Screenshot of the bipolar user interface](screenshots/KeithleyGUI_2N3904.png)
 
 ## Installation
 Install the stable version from PyPI by running
